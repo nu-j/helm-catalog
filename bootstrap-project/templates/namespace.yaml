@@ -13,13 +13,14 @@
 */ -}}
 {{- $team := required "team is required — must match the ArgoCD namespace: <team>-gitops" .Values.team }}
 {{- $managedBy := printf "%s-gitops" $team }}
+{{- $primaryNsSuffix := .Values.primaryNamespaceSuffix | default "ci-cd" }}
 
-{{- /* ── Tools namespace (always created) ─────────────────────────────── */ -}}
+{{- /* ── Primary tooling namespace (always created) ────────────────────── */ -}}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ printf "%s-tools" $team | quote }}
+  name: {{ printf "%s-%s" $team $primaryNsSuffix | quote }}
   annotations:
     argocd.argoproj.io/sync-wave: "0"
   labels:

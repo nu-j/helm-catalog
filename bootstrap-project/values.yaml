@@ -3,14 +3,18 @@
 #
 # Minimal interface: declare your team, groups, and systems.
 # The chart derives all namespace names from the convention <team>-<system>-<env>.
-# A <team>-tools namespace is always created automatically — no config needed.
+# A primary tooling namespace is always created automatically — no config needed.
 #
 # Namespace naming convention:
-#   <team>-tools              — CI/CD tooling (Tekton pipelines, Nexus, Sonarqube etc.)
-#   <team>-<system>-<env>     — Application namespaces per system and environment
+#   <team>-<primaryNamespaceSuffix>   — CI/CD tooling (Tekton, Nexus, Sonarqube etc.)
+#   <team>-<system>-<env>             — Application namespaces per system and environment
+#
+# primaryNamespaceSuffix defaults to "ci-cd" to match the ubiquitous-journey convention
+# where release: ci-cd generates destination: <team>-ci-cd for all child Applications.
+# Override to "tools" or any other suffix if your team uses a different convention.
 #
 # Example output for team: my-team, system: pet-battle, envs: [dev, test, stage]:
-#   my-team-tools
+#   my-team-ci-cd
 #   my-team-pet-battle-dev
 #   my-team-pet-battle-test
 #   my-team-pet-battle-stage
@@ -23,6 +27,11 @@
 
 # team: short name matching the ArgoCD namespace provisioned by the platform (<team>-gitops)
 team: my-team
+
+# primaryNamespaceSuffix: suffix for the primary CI/CD tooling namespace (<team>-<suffix>).
+# Defaults to "ci-cd" to match the ubiquitous-journey convention (release: ci-cd).
+# Override in values-tooling.yaml if your team uses a different suffix (e.g. "tools").
+primaryNamespaceSuffix: ci-cd
 
 # bindings: applied identically to every namespace (tools + all system-env combinations)
 bindings:

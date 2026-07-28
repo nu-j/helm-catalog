@@ -50,6 +50,12 @@ spec:
       {{- end }}
     scopes: '[groups]'
 
+  # Unique label key prevents resource ownership conflicts when the platform ArgoCD and
+  # this team ArgoCD both run on the same cluster. The default app.kubernetes.io/instance
+  # is shared across all ArgoCD instances — giving each team its own key scopes label
+  # tracking to that instance only and eliminates "resource owned by another Application" errors.
+  applicationInstanceLabelKey: {{ printf "argocd.argoproj.io/app-%s" .Values.team.name | quote }}
+
   server:
     resources: {{ .Values.argocd.resources.server | toYaml | nindent 6 }}
     # route.enabled tells the operator to create an OpenShift Route for the ArgoCD UI.
