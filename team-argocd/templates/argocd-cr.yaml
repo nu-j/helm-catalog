@@ -61,8 +61,7 @@ spec:
       enabled: true
       tls:
         insecureEdgeTerminationPolicy: Redirect
-        # edge: router terminates TLS with its own valid cert, forwards HTTP to ArgoCD
-        termination: edge
+        termination: reencrypt
 
   repo:
     resources: {{ .Values.argocd.resources.repo | toYaml | nindent 6 }}
