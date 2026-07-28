@@ -26,8 +26,17 @@ spec:
   # ── OpenShift OAuth ────────────────────────────────────────────────────────
   # Configures Dex to use OpenShift OAuth so team members log in with their
   # cluster credentials — no separate ArgoCD user management needed.
-  dex:
-    openShiftOAuth: true
+  sso:
+    dex:
+      openShiftOAuth: true
+      resources:
+        limits:
+          cpu: 500m
+          memory: 256Mi
+        requests:
+          cpu: 250m
+          memory: 128Mi
+    provider: dex
 
   rbac:
     defaultPolicy: ''
