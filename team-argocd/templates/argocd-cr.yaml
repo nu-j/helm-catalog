@@ -51,17 +51,15 @@ spec:
     scopes: '[groups]'
 
   server:
-    # insecure: true — ArgoCD server listens on plain HTTP internally.
-    # TLS is terminated at the OpenShift router (edge termination below) using the
-    # cluster's wildcard cert, which avoids browser certificate errors from the
-    # ArgoCD self-signed cert that passthrough termination would expose.
-    insecure: true
     resources: {{ .Values.argocd.resources.server | toYaml | nindent 6 }}
+    # route.enabled tells the operator to create an OpenShift Route for the ArgoCD UI.
+    # TLS is NOT configured here — the operator annotates the server Service with
+    # service.beta.openshift.io/serving-cert-secret-name so OpenShift injects a cert
+    # signed by the cluster service CA. The operator then creates a reencrypt route and
+    # sets destinationCACertificate automatically. Do NOT set insecure: true or add a
+    # tls: block — that contradicts reencrypt and causes "Application Not Available".
     route:
       enabled: true
-      tls:
-        insecureEdgeTerminationPolicy: Redirect
-        termination: reencrypt
 
   repo:
     resources: {{ .Values.argocd.resources.repo | toYaml | nindent 6 }}
