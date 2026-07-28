@@ -44,6 +44,7 @@ spec:
     # Admins are granted via adGroupName (team's AD/GitHub group) or cluster-admins.
     policy: |
       g, system:cluster-admins, role:admin
+      g, cluster-admins, role:admin
       {{- if .Values.team.adGroupName }}
       g, {{ .Values.team.adGroupName }}, role:admin
       {{- end }}
