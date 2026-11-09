@@ -1,14 +1,13 @@
-{{- if .Values.seed.enabled }}
+{{- if ((.Values.seed).enabled | default true) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: gitea-seed-demo-users
   namespace: {{ .Values.namespace | default "gitea" | quote }}
   annotations:
-    # Re-run on every sync; script is idempotent
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # After Gitea Deployment (wave 0). Replace=true so re-sync can recreate the completed Job.
     argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
   labels:
     platform/managed-by: gitea
     app.kubernetes.io/name: gitea

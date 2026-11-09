@@ -31,4 +31,4 @@ helm template gitea . -n gitea
 - **DEMO ONLY** — passwords are in Git on purpose.
 - Gitea models “groups” as **organizations**; the seed Job creates orgs and adds users to a `Members` team.
 - Usernames are lowercase (`donald`, `daisy`); display names keep Donald/Daisy.
-- Seed Job uses Argo Sync hooks and is idempotent.
+- Seed Job is a normal Argo-managed Job (sync-wave 5, Replace on re-sync); the script is idempotent.
