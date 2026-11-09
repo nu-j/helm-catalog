@@ -72,7 +72,13 @@ gitea:
   ingress:
     enabled: false
 
-  # Single-replica demo profile — SQLite, no Redis/Valkey/Postgres HA
+  # Single-replica demo profile — SQLite + level queue on a shared PVC.
+  # Recreate is required: RollingUpdate starts a 2nd pod that can't lock
+  # /data/queues (and sqlite), which crash-loops and leaves the old pod running.
+  replicaCount: 1
+  strategy:
+    type: Recreate
+
   redis-cluster:
     enabled: false
   valkey-cluster:

@@ -13,7 +13,8 @@ Demo Gitea on the **management** cluster. Wraps the official [Gitea Helm chart](
 | Users | `mickey`, `minnie` → mice; `donald`, `daisy` → ducks (password `d1sney`) |
 | Password policy | `PASSWORD_COMPLEXITY: "off"` (must be quoted — bare `off` becomes YAML false) |
 | Admin password mode | `initialOnlyNoReset` — avoids init-container failures re-applying `d1sney` on every start |
-| DB | SQLite (demo profile; no Postgres/Valkey) |
+| DB | SQLite + level queue (demo; no Postgres/Valkey) |
+| Deploy strategy | `Recreate` (not RollingUpdate) — shared PVC can't be locked by two pods |
 
 ## Wiring
 
