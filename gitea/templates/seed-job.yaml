@@ -1,0 +1,75 @@
+{{- if .Values.seed.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gitea-seed-demo-users
+  namespace: {{ .Values.namespace | default "gitea" | quote }}
+  annotations:
+    # Re-run on every sync; script is idempotent
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "5"
+  labels:
+    platform/managed-by: gitea
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/component: seed
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gitea
+        app.kubernetes.io/component: seed
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seed
+          image: {{ .Values.seed.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/seed.sh"]
+          env:
+            - name: GITEA_HTTP_URL
+              value: {{ .Values.seed.httpURL | quote }}
+            - name: GITEA_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-seed-credentials
+                  key: admin-username
+            - name: GITEA_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-seed-credentials
+                  key: admin-password
+            - name: GITEA_SEED_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-seed-credentials
+                  key: seed-password
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: gitea-seed-script
+            defaultMode: 0755
+{{- end }}

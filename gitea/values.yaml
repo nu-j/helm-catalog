@@ -1,0 +1,119 @@
+#
+# values.yaml — Gitea demo wrapper defaults (management cluster)
+#
+# Overridden by platform-config layers:
+#   default.yaml → regions/<r>/region.yaml → clusters/management/common.yaml
+#     → clusters/management/<group>/clusterdef.yaml
+#
+# Upstream chart reference:
+#   https://gitea.com/gitea/helm-chart
+#   https://dl.gitea.com/charts/ (chart 12.7.0 / app 1.27.0)
+#
+# DEMO ONLY — credentials and seed users are intentionally plaintext in Git.
+#
+
+# Namespace created by this wrapper (CreateNamespace sync option is false platform-wide).
+namespace: gitea
+
+# ── Demo seed Job (wrapper-owned) ─────────────────────────────────────────────
+# Creates Gitea organizations (groups) and users after Gitea is up.
+# Idempotent — safe to re-run on every Argo sync.
+seed:
+  enabled: true
+  image: curlimages/curl:8.11.1
+  # In-cluster HTTP service created by the upstream chart when release name is "gitea"
+  httpURL: http://gitea-http:3000
+  # Shared password for all seeded demo users
+  password: d1sney
+  # Organizations ("groups") and their members
+  groups:
+    - name: mice
+      fullName: Mice
+      description: Demo group — Mickey & Minnie
+      users:
+        - username: mickey
+          fullName: Mickey Mouse
+          email: mickey@disney.demo
+        - username: minnie
+          fullName: Minnie Mouse
+          email: minnie@disney.demo
+    - name: ducks
+      fullName: Ducks
+      description: Demo group — Donald & Daisy
+      users:
+        - username: donald
+          fullName: Donald Duck
+          email: donald@disney.demo
+        - username: daisy
+          fullName: Daisy Duck
+          email: daisy@disney.demo
+
+# ── Upstream gitea subchart values ────────────────────────────────────────────
+# All keys below are nested under the dependency chart name `gitea`.
+gitea:
+  # Stable resource names regardless of Helm release naming quirks
+  fullnameOverride: gitea
+
+  # OpenShift SCC-safe defaults (no fixed runAsUser: 1000)
+  openshift:
+    enabled: true
+
+  # Expose via OpenShift Route on the apps domain
+  route:
+    enabled: true
+    # TODO - change when cluster rebuilt
+    # host: gitea.apps.org.internal
+    host: gitea.apps.rosa.rosa-vrprn.1mmy.p3.openshiftapps.com
+    
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+  ingress:
+    enabled: false
+
+  # Single-replica demo profile — SQLite, no Redis/Valkey/Postgres HA
+  redis-cluster:
+    enabled: false
+  valkey-cluster:
+    enabled: false
+  valkey:
+    enabled: false
+  redis:
+    enabled: false
+  postgresql:
+    enabled: false
+  postgresql-ha:
+    enabled: false
+
+  persistence:
+    enabled: true
+    size: 5Gi
+
+  # Skip helm test pods in Argo CD
+  test:
+    enabled: false
+
+  gitea:
+    admin:
+      username: gitea_admin
+      password: d1sney
+      email: gitea-admin@disney.demo
+      passwordMode: keepUpdated
+
+    config:
+      server:
+        # ROOT_URL / DOMAIN are derived from route.host when set
+        DISABLE_SSH: true
+      database:
+        DB_TYPE: sqlite3
+      session:
+        PROVIDER: memory
+      cache:
+        ADAPTER: memory
+      queue:
+        TYPE: level
+      service:
+        DISABLE_REGISTRATION: true
+      repository:
+        DEFAULT_PRIVATE: private

@@ -1,0 +1,167 @@
+{{- if .Values.seed.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-seed-script
+  namespace: {{ .Values.namespace | default "gitea" | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    platform/managed-by: gitea
+    app.kubernetes.io/name: gitea
+    app.kubernetes.io/component: seed
+data:
+  seed.sh: |
+    #!/bin/sh
+    # Demo seed: create Gitea orgs (groups) and users. Idempotent.
+    set -eu
+
+    BASE_URL="${GITEA_HTTP_URL:?}"
+    ADMIN_USER="${GITEA_ADMIN_USERNAME:?}"
+    ADMIN_PASS="${GITEA_ADMIN_PASSWORD:?}"
+    SEED_PASS="${GITEA_SEED_PASSWORD:?}"
+    AUTH="${ADMIN_USER}:${ADMIN_PASS}"
+
+    echo "Waiting for Gitea at ${BASE_URL} ..."
+    i=0
+    while [ "$i" -lt 60 ]; do
+      if curl -sf "${BASE_URL}/api/v1/version" >/dev/null 2>&1; then
+        echo "Gitea is up."
+        break
+      fi
+      i=$((i + 1))
+      sleep 5
+    done
+    if [ "$i" -eq 60 ]; then
+      echo "ERROR: timed out waiting for Gitea" >&2
+      exit 1
+    fi
+
+    # Wait until admin basic-auth works (admin user is created by chart init)
+    j=0
+    while [ "$j" -lt 36 ]; do
+      code=$(curl -s -o /dev/null -w "%{http_code}" -u "${AUTH}" "${BASE_URL}/api/v1/user" || true)
+      if [ "${code}" = "200" ]; then
+        echo "Admin auth OK."
+        break
+      fi
+      echo "Admin not ready yet (HTTP ${code}); waiting..."
+      j=$((j + 1))
+      sleep 5
+    done
+    if [ "$j" -eq 36 ]; then
+      echo "ERROR: timed out waiting for admin user" >&2
+      exit 1
+    fi
+
+    api() {
+      method="$1"
+      path="$2"
+      body="${3:-}"
+      if [ -n "${body}" ]; then
+        curl -sS -o /tmp/gitea-api.out -w "%{http_code}" \
+          -u "${AUTH}" \
+          -H "Content-Type: application/json" \
+          -X "${method}" \
+          "${BASE_URL}${path}" \
+          -d "${body}"
+      else
+        curl -sS -o /tmp/gitea-api.out -w "%{http_code}" \
+          -u "${AUTH}" \
+          -H "Content-Type: application/json" \
+          -X "${method}" \
+          "${BASE_URL}${path}"
+      fi
+    }
+
+    create_user() {
+      username="$1"
+      email="$2"
+      full_name="$3"
+      body=$(printf '{"username":"%s","email":"%s","full_name":"%s","password":"%s","must_change_password":false,"send_notify":false,"visibility":"public"}' \
+        "${username}" "${email}" "${full_name}" "${SEED_PASS}")
+      code=$(api POST /api/v1/admin/users "${body}")
+      case "${code}" in
+        201) echo "Created user ${username}" ;;
+        409|422) echo "User ${username} already exists (HTTP ${code}) — OK" ;;
+        *) echo "ERROR creating user ${username}: HTTP ${code} $(cat /tmp/gitea-api.out)" >&2; exit 1 ;;
+      esac
+    }
+
+    create_org() {
+      name="$1"
+      full_name="$2"
+      description="$3"
+      body=$(printf '{"username":"%s","full_name":"%s","description":"%s","visibility":"public"}' \
+        "${name}" "${full_name}" "${description}")
+      code=$(api POST /api/v1/orgs "${body}")
+      case "${code}" in
+        201) echo "Created org ${name}" ;;
+        409|422) echo "Org ${name} already exists (HTTP ${code}) — OK" ;;
+        *) echo "ERROR creating org ${name}: HTTP ${code} $(cat /tmp/gitea-api.out)" >&2; exit 1 ;;
+      esac
+    }
+
+    ensure_members_team() {
+      org="$1"
+      body='{"name":"Members","description":"Demo members","permission":"write","can_create_org_repo":true,"includes_all_repositories":true,"units":["repo.code","repo.issues","repo.pulls","repo.releases","repo.wiki","repo.packages","repo.actions"]}'
+      code=$(api POST "/api/v1/orgs/${org}/teams" "${body}")
+      case "${code}" in
+        201)
+          id=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' /tmp/gitea-api.out | head -1)
+          echo "${id}"
+          return
+          ;;
+        409|422)
+          ;;
+        *)
+          echo "ERROR creating Members team in ${org}: HTTP ${code} $(cat /tmp/gitea-api.out)" >&2
+          exit 1
+          ;;
+      esac
+
+      code=$(api GET "/api/v1/orgs/${org}/teams")
+      if [ "${code}" != "200" ]; then
+        echo "ERROR listing teams for ${org}: HTTP ${code} $(cat /tmp/gitea-api.out)" >&2
+        exit 1
+      fi
+      # Split objects and pick the Members team id
+      id=$(tr '}' '\n' < /tmp/gitea-api.out | grep '"name":"Members"' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+      if [ -z "${id}" ]; then
+        id=$(tr '}' '\n' < /tmp/gitea-api.out | grep '"name":"Owners"' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)
+      fi
+      if [ -z "${id}" ]; then
+        echo "ERROR: could not resolve Members/Owners team for org ${org}" >&2
+        cat /tmp/gitea-api.out >&2
+        exit 1
+      fi
+      echo "${id}"
+    }
+
+    add_member() {
+      team_id="$1"
+      username="$2"
+      code=$(api PUT "/api/v1/teams/${team_id}/members/${username}")
+      case "${code}" in
+        204|200) echo "Added ${username} to team ${team_id}" ;;
+        409|422) echo "User ${username} already on team ${team_id} (HTTP ${code}) — OK" ;;
+        *) echo "ERROR adding ${username} to team ${team_id}: HTTP ${code} $(cat /tmp/gitea-api.out)" >&2; exit 1 ;;
+      esac
+    }
+
+    {{- range .Values.seed.groups }}
+    {{- $group := .name }}
+    # --- group: {{ $group }} ---
+    create_org {{ .name | quote }} {{ .fullName | quote }} {{ .description | default "" | quote }}
+    {{- range .users }}
+    create_user {{ .username | quote }} {{ .email | quote }} {{ .fullName | quote }}
+    {{- end }}
+    TEAM_ID=$(ensure_members_team {{ $group | quote }})
+    echo "Org {{ $group }} Members team id=${TEAM_ID}"
+    {{- range .users }}
+    add_member "${TEAM_ID}" {{ .username | quote }}
+    {{- end }}
+
+    {{- end }}
+    echo "Seed complete."
+{{- end }}
