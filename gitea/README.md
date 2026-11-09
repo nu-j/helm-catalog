@@ -6,7 +6,7 @@ Demo Gitea on the **management** cluster. Wraps the official [Gitea Helm chart](
 
 | Item | Value |
 |------|--------|
-| Namespace | `gitea` |
+| Namespace | `gitea` (labelled `argocd.argoproj.io/managed-by: openshift-gitops` so the platform Argo SA can sync) |
 | Route | `gitea.apps.org.internal` (edge TLS) — override host in platform-config if your apps domain differs |
 | Admin | `gitea_admin` / `d1sney` |
 | Orgs (groups) | `mice`, `ducks` |

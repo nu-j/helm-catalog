@@ -5,6 +5,10 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
   labels:
+    # Lets the platform Argo CD SA manage resources in this namespace.
+    # OpenShift GitOps watches this label and creates the RoleBinding for
+    # openshift-gitops-argocd-application-controller automatically.
+    argocd.argoproj.io/managed-by: openshift-gitops
     platform/managed-by: gitea
     app.kubernetes.io/name: gitea
     app.kubernetes.io/part-of: platform
