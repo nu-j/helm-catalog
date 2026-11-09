@@ -99,7 +99,8 @@ gitea:
       username: gitea_admin
       password: d1sney
       email: gitea-admin@disney.demo
-      passwordMode: keepUpdated
+      # Don't re-apply password on every pod start (avoids init failure once admin exists)
+      passwordMode: initialOnlyNoReset
 
     config:
       server:
@@ -118,8 +119,10 @@ gitea:
       repository:
         DEFAULT_PRIVATE: private
       # Demo passwords (e.g. d1sney) fail default complexity; Gitea then returns
-      # the misleading API error "PasswordIsRequired". Turn complexity off for the lab.
+      # the misleading API error "PasswordIsRequired".
+      # IMPORTANT: quote "off" — bare `off` is YAML 1.1 boolean false and renders as
+      # PASSWORD_COMPLEXITY=false, which does NOT disable checks.
       security:
         MIN_PASSWORD_LENGTH: 6
-        PASSWORD_COMPLEXITY: off
+        PASSWORD_COMPLEXITY: "off"
 
