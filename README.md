@@ -12,6 +12,7 @@ Each subdirectory is a standalone Helm chart. Reference it with `repoURL` pointi
 | `alertmanager` | Spoke/hub child Application (Argo CD) | All clusters | Prometheus Alertmanager wrapper (prometheus-community/alertmanager) |
 | `stackrox` | Hub child Application (Argo CD) | Hub only | RHACS Central Services wrapper (charts.stackrox.io/central-services) |
 | `gitea` | Management child Application (Argo CD) | Management only | Official Gitea chart wrapper + OpenShift Route + demo user/org seed Job |
+| `tekton-pipelines` | Management child Application (Argo CD) | Management only | Platform Tekton pipelines in `self-service` (team-onboarding, …) |
 | `devspaces` | Spoke child Application (Argo CD) | Dev spokes | Red Hat DevSpaces CheCluster CR — browser-based VS Code workspaces for dev teams |
 | `platform-config-snapshot` | Spoke/hub child Application (Argo CD) | All clusters | Read-only ConfigMap of fully merged platform-config values for this cluster |
 | `argocd-instance` | Spoke/hub child Application (Argo CD) | All clusters | Patches operator-managed ArgoCD CR (RBAC, resources, resourceExclusions) and creates openshift-gitops namespace RoleBindings |

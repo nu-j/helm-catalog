@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tekton-pipelines
+description: >
+  Platform-owned Tekton pipelines for self-service automation (management cluster).
+  App teams consume these pipelines; they do not own this chart.
+  Requires the OpenShift Pipelines operator (Pipeline / Task CRDs).
+type: application
+version: 0.1.0

@@ -1,0 +1,27 @@
+#
+# values.yaml — platform Tekton pipelines (management / self-service)
+#
+# DEMO: GitHub credentials are PipelineRun params (not GitOps'd).
+# Gitea credentials are a pre-created Secret in this namespace.
+#
+
+namespace: self-service
+
+gitea:
+  # Public Route to management Gitea (no trailing slash)
+  baseURL: https://gitea.apps.rosa.rosa-vrprn.1mmy.p3.openshiftapps.com
+  # Secret in self-service NS — keys: username, password
+  credentialsSecret: gitea-platform-credentials
+
+teamOnboarding:
+  enabled: true
+  # Skeleton cloned publicly from GitHub, rewritten, pushed to Gitea
+  skeletonRepoURL: https://github.com/nu-j/my-team-gitops.git
+  # platform-config repo that receives the teams: PR
+  platformConfigGithubRepo: nu-j/platform-config
+  platformConfigDefaultBranch: main
+  # CLUSTER_NAME param maps here; CLUSTER_TYPE is hardcoded for the demo
+  clusterType: dev
+  # How long to poll for PR merge (seconds between checks / max attempts)
+  prPollIntervalSeconds: 30
+  prPollMaxAttempts: 60

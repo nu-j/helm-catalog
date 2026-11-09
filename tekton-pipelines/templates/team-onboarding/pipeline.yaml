@@ -1,0 +1,441 @@
+{{- if ((.Values.teamOnboarding).enabled | default true) }}
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: team-onboarding
+  namespace: {{ .Values.namespace | default "self-service" | quote }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    description: |
+      Self-service team onboarding: create Gitea org/repo from my-team-gitops skeleton,
+      open a platform-config PR to register the team, poll until merged.
+  labels:
+    platform/managed-by: tekton-pipelines
+    platform/pipeline: team-onboarding
+spec:
+  description: >
+    Onboard a new team: Gitea org + rewritten gitops repo, then PR into platform-config
+    for clusters/dev/<CLUSTER_NAME>/clusterdef.yaml. Success = PR merged.
+  params:
+    - name: TEAM_NAME
+      type: string
+      description: Short team name (teams map key; drives <team>-gitops / <team>-ci-cd)
+    - name: CLUSTER_NAME
+      type: string
+      description: Spoke cluster group under clusters/dev/ (demo default digital)
+      default: digital
+    - name: GIT_GROUP
+      type: string
+      description: Gitea org/owner. Empty = same as TEAM_NAME
+      default: ""
+    - name: GITHUB_TOKEN
+      type: string
+      description: "DEMO: GitHub PAT with repo + pull_request on platform-config (visible in PipelineRun)"
+    - name: GITHUB_USER
+      type: string
+      description: GitHub username for API auth / commit author
+    - name: GITEA_URL
+      type: string
+      description: Gitea base URL (no trailing slash)
+      default: {{ .Values.gitea.baseURL | quote }}
+    - name: SKELETON_REPO_URL
+      type: string
+      default: {{ .Values.teamOnboarding.skeletonRepoURL | quote }}
+    - name: PLATFORM_CONFIG_REPO
+      type: string
+      default: {{ .Values.teamOnboarding.platformConfigGithubRepo | quote }}
+    - name: PLATFORM_CONFIG_BRANCH
+      type: string
+      default: {{ .Values.teamOnboarding.platformConfigDefaultBranch | default "main" | quote }}
+    - name: CLUSTER_TYPE
+      type: string
+      description: Hardcoded for this demo UI — always dev
+      default: {{ .Values.teamOnboarding.clusterType | default "dev" | quote }}
+
+  workspaces:
+    - name: work
+      description: Shared workspace for git clones
+
+  tasks:
+    # ── 1. Gitea org + public repo ───────────────────────────────────────────
+    - name: ensure-gitea-repo
+      params:
+        - name: TEAM_NAME
+          value: $(params.TEAM_NAME)
+        - name: GIT_GROUP
+          value: $(params.GIT_GROUP)
+        - name: GITEA_URL
+          value: $(params.GITEA_URL)
+      taskSpec:
+        params:
+          - name: TEAM_NAME
+            type: string
+          - name: GIT_GROUP
+            type: string
+          - name: GITEA_URL
+            type: string
+        results:
+          - name: git-group
+            type: string
+            description: Resolved Gitea org
+          - name: repo-url
+            type: string
+            description: HTTPS clone URL for the new gitops repo
+        steps:
+          - name: ensure
+            image: curlimages/curl:8.11.1
+            env:
+              - name: GITEA_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.gitea.credentialsSecret | quote }}
+                    key: username
+              - name: GITEA_PASS
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.gitea.credentialsSecret | quote }}
+                    key: password
+              - name: TEAM_NAME
+                value: $(params.TEAM_NAME)
+              - name: GIT_GROUP_PARAM
+                value: $(params.GIT_GROUP)
+              - name: GITEA_URL
+                value: $(params.GITEA_URL)
+            script: |
+              #!/bin/sh
+              set -eu
+              GIT_GROUP="${GIT_GROUP_PARAM:-}"
+              if [ -z "${GIT_GROUP}" ]; then
+                GIT_GROUP="${TEAM_NAME}"
+              fi
+              REPO_NAME="${TEAM_NAME}-gitops"
+              AUTH="${GITEA_USER}:${GITEA_PASS}"
+              BASE="${GITEA_URL}"
+
+              echo "Gitea=${BASE} org=${GIT_GROUP} repo=${REPO_NAME}"
+
+              api() {
+                method="$1"; path="$2"; body="${3:-}"
+                if [ -n "${body}" ]; then
+                  curl -sS -o /tmp/out -w "%{http_code}" -u "${AUTH}" \
+                    -H "Content-Type: application/json" -X "${method}" \
+                    "${BASE}${path}" -d "${body}"
+                else
+                  curl -sS -o /tmp/out -w "%{http_code}" -u "${AUTH}" \
+                    -H "Content-Type: application/json" -X "${method}" \
+                    "${BASE}${path}"
+                fi
+              }
+
+              code=$(api POST /api/v1/orgs "$(printf '{"username":"%s","visibility":"public"}' "${GIT_GROUP}")")
+              case "${code}" in
+                201) echo "Created org ${GIT_GROUP}" ;;
+                409|422) echo "Org ${GIT_GROUP} already exists (HTTP ${code}) — OK" ;;
+                *) echo "ERROR creating org: HTTP ${code} $(cat /tmp/out)" >&2; exit 1 ;;
+              esac
+
+              body=$(printf '{"name":"%s","private":false,"auto_init":false,"default_branch":"main"}' "${REPO_NAME}")
+              code=$(api POST "/api/v1/orgs/${GIT_GROUP}/repos" "${body}")
+              case "${code}" in
+                201) echo "Created repo ${GIT_GROUP}/${REPO_NAME}" ;;
+                409|422) echo "Repo already exists (HTTP ${code}) — OK" ;;
+                *) echo "ERROR creating repo: HTTP ${code} $(cat /tmp/out)" >&2; exit 1 ;;
+              esac
+
+              printf '%s' "${GIT_GROUP}" > "$(results.git-group.path)"
+              printf '%s' "${BASE}/${GIT_GROUP}/${REPO_NAME}.git" > "$(results.repo-url.path)"
+              echo "GITEA_REPO_URL=$(cat "$(results.repo-url.path)")"
+
+    # ── 2. Clone skeleton, rewrite, push to Gitea ────────────────────────────
+    - name: populate-gitops-repo
+      runAfter: [ensure-gitea-repo]
+      workspaces:
+        - name: work
+          workspace: work
+      params:
+        - name: TEAM_NAME
+          value: $(params.TEAM_NAME)
+        - name: SKELETON_REPO_URL
+          value: $(params.SKELETON_REPO_URL)
+        - name: GITEA_REPO_URL
+          value: $(tasks.ensure-gitea-repo.results.repo-url)
+      taskSpec:
+        params:
+          - name: TEAM_NAME
+            type: string
+          - name: SKELETON_REPO_URL
+            type: string
+          - name: GITEA_REPO_URL
+            type: string
+        workspaces:
+          - name: work
+        steps:
+          - name: clone-rewrite-push
+            image: alpine:3.20
+            workingDir: $(workspaces.work.path)
+            env:
+              - name: GITEA_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.gitea.credentialsSecret | quote }}
+                    key: username
+              - name: GITEA_PASS
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Values.gitea.credentialsSecret | quote }}
+                    key: password
+              - name: TEAM_NAME
+                value: $(params.TEAM_NAME)
+              - name: SKELETON_REPO_URL
+                value: $(params.SKELETON_REPO_URL)
+              - name: GITEA_REPO_URL
+                value: $(params.GITEA_REPO_URL)
+            script: |
+              #!/bin/sh
+              set -eu
+              apk add --no-cache git sed findutils >/dev/null
+
+              rm -rf skeleton out
+              git clone --depth 1 "${SKELETON_REPO_URL}" skeleton
+              rm -rf skeleton/.git
+
+              find skeleton -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.md' -o -name '*.tpl' \) \
+                -exec sed -i "s/my-team/${TEAM_NAME}/g" {} +
+
+              if [ -f skeleton/values.yaml ]; then
+                sed -i "s|^source:.*|source: ${GITEA_REPO_URL}|" skeleton/values.yaml
+              fi
+
+              case "${GITEA_REPO_URL}" in
+                https://*) GITEA_PUSH="https://${GITEA_USER}:${GITEA_PASS}@${GITEA_REPO_URL#https://}" ;;
+                http://*)  GITEA_PUSH="http://${GITEA_USER}:${GITEA_PASS}@${GITEA_REPO_URL#http://}" ;;
+                *) echo "Unsupported Gitea URL: ${GITEA_REPO_URL}" >&2; exit 1 ;;
+              esac
+
+              rm -rf out
+              if ! git clone "${GITEA_PUSH}" out; then
+                echo "Clone failed (empty repo?) — init + remote"
+                mkdir -p out
+                git -C out init -b main
+                git -C out remote add origin "${GITEA_PUSH}"
+              fi
+              # Replace tree but keep .git
+              find out -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+              cp -a skeleton/. out/
+              cd out
+              git config user.email "platform-pipelines@nu-j.demo"
+              git config user.name "platform-pipelines"
+              git add -A
+              git status
+              if git diff --cached --quiet; then
+                echo "Nothing to commit (repo already populated?) — OK"
+                exit 0
+              fi
+              git commit -m "Onboard team ${TEAM_NAME} from my-team-gitops skeleton"
+              git branch -M main
+              git push -u origin main
+
+
+    # ── 3. Open platform-config PR and poll until merged ─────────────────────
+    - name: platform-config-pr
+      runAfter: [populate-gitops-repo]
+      workspaces:
+        - name: work
+          workspace: work
+      params:
+        - name: TEAM_NAME
+          value: $(params.TEAM_NAME)
+        - name: CLUSTER_NAME
+          value: $(params.CLUSTER_NAME)
+        - name: CLUSTER_TYPE
+          value: $(params.CLUSTER_TYPE)
+        - name: GITHUB_TOKEN
+          value: $(params.GITHUB_TOKEN)
+        - name: GITHUB_USER
+          value: $(params.GITHUB_USER)
+        - name: PLATFORM_CONFIG_REPO
+          value: $(params.PLATFORM_CONFIG_REPO)
+        - name: PLATFORM_CONFIG_BRANCH
+          value: $(params.PLATFORM_CONFIG_BRANCH)
+        - name: GITEA_REPO_URL
+          value: $(tasks.ensure-gitea-repo.results.repo-url)
+        - name: PR_POLL_INTERVAL
+          value: {{ .Values.teamOnboarding.prPollIntervalSeconds | default 30 | quote }}
+        - name: PR_POLL_MAX
+          value: {{ .Values.teamOnboarding.prPollMaxAttempts | default 60 | quote }}
+      taskSpec:
+        params:
+          - name: TEAM_NAME
+            type: string
+          - name: CLUSTER_NAME
+            type: string
+          - name: CLUSTER_TYPE
+            type: string
+          - name: GITHUB_TOKEN
+            type: string
+          - name: GITHUB_USER
+            type: string
+          - name: PLATFORM_CONFIG_REPO
+            type: string
+          - name: PLATFORM_CONFIG_BRANCH
+            type: string
+          - name: GITEA_REPO_URL
+            type: string
+          - name: PR_POLL_INTERVAL
+            type: string
+          - name: PR_POLL_MAX
+            type: string
+        workspaces:
+          - name: work
+        steps:
+          - name: open-and-wait
+            image: alpine:3.20
+            workingDir: $(workspaces.work.path)
+            env:
+              - name: TEAM_NAME
+                value: $(params.TEAM_NAME)
+              - name: CLUSTER_NAME
+                value: $(params.CLUSTER_NAME)
+              - name: CLUSTER_TYPE
+                value: $(params.CLUSTER_TYPE)
+              - name: GITHUB_TOKEN
+                value: $(params.GITHUB_TOKEN)
+              - name: GITHUB_USER
+                value: $(params.GITHUB_USER)
+              - name: PLATFORM_CONFIG_REPO
+                value: $(params.PLATFORM_CONFIG_REPO)
+              - name: PLATFORM_CONFIG_BRANCH
+                value: $(params.PLATFORM_CONFIG_BRANCH)
+              - name: GITEA_REPO_URL
+                value: $(params.GITEA_REPO_URL)
+              - name: PR_POLL_INTERVAL
+                value: $(params.PR_POLL_INTERVAL)
+              - name: PR_POLL_MAX
+                value: $(params.PR_POLL_MAX)
+            script: |
+              #!/bin/sh
+              set -eu
+              apk add --no-cache git curl jq >/dev/null
+
+              BRANCH="onboard/${TEAM_NAME}"
+              FILE="clusters/${CLUSTER_TYPE}/${CLUSTER_NAME}/clusterdef.yaml"
+              API="https://api.github.com/repos/${PLATFORM_CONFIG_REPO}"
+              AUTH_HDR="Authorization: Bearer ${GITHUB_TOKEN}"
+              ACCEPT="Accept: application/vnd.github+json"
+
+              rm -rf platform-config
+              git clone --depth 1 -b "${PLATFORM_CONFIG_BRANCH}" \
+                "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${PLATFORM_CONFIG_REPO}.git" platform-config
+              cd platform-config
+
+              if [ ! -f "${FILE}" ]; then
+                echo "ERROR: ${FILE} not found" >&2
+                exit 1
+              fi
+
+              if grep -qE "^[[:space:]]*${TEAM_NAME}:" "${FILE}"; then
+                echo "Team ${TEAM_NAME} already present in ${FILE} on ${PLATFORM_CONFIG_BRANCH}."
+                echo ""
+                echo "============================================================"
+                echo " Team onboarding complete (already registered)."
+                echo " Gitea repo: ${GITEA_REPO_URL}"
+                echo " After Argo syncs on ${CLUSTER_NAME}, expect Applications:"
+                echo "   team-argocd-${TEAM_NAME}"
+                echo "   team-bootstrap-${TEAM_NAME}"
+                echo " and namespace ${TEAM_NAME}-ci-cd on that spoke."
+                echo "============================================================"
+                exit 0
+              fi
+
+              git checkout -b "${BRANCH}"
+
+              if ! grep -qE '^teams:' "${FILE}"; then
+                echo "ERROR: no top-level teams: key in ${FILE}" >&2
+                exit 1
+              fi
+
+              tmp=$(mktemp)
+              awk -v team="${TEAM_NAME}" -v url="${GITEA_REPO_URL}" '
+                BEGIN { done=0 }
+                /^teams:/ && !done {
+                  print
+                  print "  " team ":"
+                  print "    gitopsRepoURL: " url
+                  print "    targetRevision: main"
+                  done=1
+                  next
+                }
+                { print }
+              ' "${FILE}" > "${tmp}"
+              mv "${tmp}" "${FILE}"
+
+              git config user.email "platform-pipelines@nu-j.demo"
+              git config user.name "${GITHUB_USER}"
+              git add "${FILE}"
+              git commit -m "Onboard team ${TEAM_NAME} on ${CLUSTER_TYPE}/${CLUSTER_NAME}"
+              git push -u origin "${BRANCH}" --force
+
+              OWNER=$(echo "${PLATFORM_CONFIG_REPO}" | cut -d/ -f1)
+              pr_body=$(printf '{"title":"Onboard team %s (%s/%s)","head":"%s","base":"%s","body":"Automated by team-onboarding pipeline.\\n\\n- Gitea: `%s`\\n- Registers `teams.%s` in clusterdef"}' \
+                "${TEAM_NAME}" "${CLUSTER_TYPE}" "${CLUSTER_NAME}" "${BRANCH}" "${PLATFORM_CONFIG_BRANCH}" "${GITEA_REPO_URL}" "${TEAM_NAME}")
+
+              pr_code=$(curl -sS -o /tmp/pr.json -w "%{http_code}" -X POST "${API}/pulls" \
+                -H "${AUTH_HDR}" -H "${ACCEPT}" -H "Content-Type: application/json" \
+                -d "${pr_body}")
+
+              case "${pr_code}" in
+                201)
+                  PR_NUMBER=$(jq -r .number /tmp/pr.json)
+                  PR_URL=$(jq -r .html_url /tmp/pr.json)
+                  echo "Opened PR #${PR_NUMBER}: ${PR_URL}"
+                  ;;
+                422)
+                  echo "PR may already exist — looking it up..."
+                  curl -sS -o /tmp/pr.json -H "${AUTH_HDR}" -H "${ACCEPT}" \
+                    "${API}/pulls?head=${OWNER}:${BRANCH}&state=open"
+                  PR_NUMBER=$(jq -r '.[0].number // empty' /tmp/pr.json)
+                  PR_URL=$(jq -r '.[0].html_url // empty' /tmp/pr.json)
+                  if [ -z "${PR_NUMBER}" ]; then
+                    echo "ERROR: could not create or find PR: $(cat /tmp/pr.json)" >&2
+                    exit 1
+                  fi
+                  echo "Using existing PR #${PR_NUMBER}: ${PR_URL}"
+                  ;;
+                *)
+                  echo "ERROR opening PR: HTTP ${pr_code} $(cat /tmp/pr.json)" >&2
+                  exit 1
+                  ;;
+              esac
+
+              echo "Polling until PR #${PR_NUMBER} is merged (interval=${PR_POLL_INTERVAL}s, max=${PR_POLL_MAX})..."
+              i=0
+              while [ "$i" -lt "${PR_POLL_MAX}" ]; do
+                curl -sS -o /tmp/pr.json -H "${AUTH_HDR}" -H "${ACCEPT}" "${API}/pulls/${PR_NUMBER}"
+                merged=$(jq -r .merged /tmp/pr.json)
+                state=$(jq -r .state /tmp/pr.json)
+                if [ "${merged}" = "true" ]; then
+                  echo "PR #${PR_NUMBER} merged."
+                  echo ""
+                  echo "============================================================"
+                  echo " Team onboarding PR merged — assuming GitOps will take over."
+                  echo " Gitea repo: ${GITEA_REPO_URL}"
+                  echo " clusterdef: ${FILE}"
+                  echo " On spoke '${CLUSTER_NAME}' after Argo sync, expect:"
+                  echo "   Application team-argocd-${TEAM_NAME}"
+                  echo "   Application team-bootstrap-${TEAM_NAME}"
+                  echo "   Namespace ${TEAM_NAME}-ci-cd"
+                  echo " PR: ${PR_URL}"
+                  echo "============================================================"
+                  exit 0
+                fi
+                if [ "${state}" = "closed" ]; then
+                  echo "ERROR: PR #${PR_NUMBER} was closed without merge" >&2
+                  exit 1
+                fi
+                i=$((i + 1))
+                echo "  still open (attempt ${i}/${PR_POLL_MAX})..."
+                sleep "${PR_POLL_INTERVAL}"
+              done
+              echo "ERROR: timed out waiting for PR #${PR_NUMBER} to merge" >&2
+              exit 1
+{{- end }}
