@@ -11,6 +11,7 @@ Demo Gitea on the **management** cluster. Wraps the official [Gitea Helm chart](
 | Admin | `gitea_admin` / `d1sney` |
 | Orgs (groups) | `mice`, `ducks` |
 | Users | `mickey`, `minnie` → mice; `donald`, `daisy` → ducks (password `d1sney`) |
+| Password policy | `PASSWORD_COMPLEXITY: off` (demo) — otherwise Gitea API returns misleading `PasswordIsRequired` for simple passwords |
 | DB | SQLite (demo profile; no Postgres/Valkey) |
 
 ## Wiring

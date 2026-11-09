@@ -117,3 +117,9 @@ gitea:
         DISABLE_REGISTRATION: true
       repository:
         DEFAULT_PRIVATE: private
+      # Demo passwords (e.g. d1sney) fail default complexity; Gitea then returns
+      # the misleading API error "PasswordIsRequired". Turn complexity off for the lab.
+      security:
+        MIN_PASSWORD_LENGTH: 6
+        PASSWORD_COMPLEXITY: off
+

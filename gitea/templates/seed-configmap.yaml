@@ -78,8 +78,10 @@ data:
       username="$1"
       email="$2"
       full_name="$3"
-      body=$(printf '{"username":"%s","email":"%s","full_name":"%s","password":"%s","must_change_password":false,"send_notify":false,"visibility":"public"}' \
-        "${username}" "${email}" "${full_name}" "${SEED_PASS}")
+      # login_name required by some Gitea versions; password must meet app.ini policy
+      # (demo chart sets PASSWORD_COMPLEXITY=off — otherwise API returns PasswordIsRequired)
+      body=$(printf '{"username":"%s","login_name":"%s","email":"%s","full_name":"%s","password":"%s","must_change_password":false,"send_notify":false,"visibility":"public"}' \
+        "${username}" "${username}" "${email}" "${full_name}" "${SEED_PASS}")
       code=$(api POST /api/v1/admin/users "${body}")
       case "${code}" in
         201) echo "Created user ${username}" ;;
